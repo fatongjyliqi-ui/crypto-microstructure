@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-microstructure"
+version = "0.1.0"
+description = "Market microstructure of BTCUSDT on Binance spot and USD-M perpetual"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Faton Gjyliqi" }]
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "polars>=1.0",
+    "pyarrow>=14",
+    "matplotlib>=3.7",
+    "websockets>=12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E741"]
