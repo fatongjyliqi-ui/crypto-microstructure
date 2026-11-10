@@ -1,13 +1,21 @@
-"""Download Binance public market data from data.binance.vision and convert it to Parquet.
+"""Download Binance market data and convert it to Parquet.
+
+Sources:
+- data.binance.vision: perp bookTicker, aggTrades, fundingRate; spot trades.
+- Tardis.dev free tier: spot quotes (best bid/ask). Free only for the first day of each
+  month, without an API key.
 
 Layout on disk:
-    data/raw/<dataset>/<file>.zip         original archive (checksum verified)
+    data/raw/<dataset>/<file>.zip|.csv.gz  original archive (Binance: checksum verified)
     data/parquet/<dataset>/<file>.parquet  typed columns, timestamps as UTC datetimes
 
-Availability notes (checked against the bucket listing, Nov 2026):
-- Spot has no bookTicker dataset at all, only aggTrades, klines and trades.
+Availability notes (checked Nov 2026):
+- data.binance.vision has no spot bookTicker at all, only aggTrades, klines and trades.
 - USD-M futures bookTicker daily files exist only from 2023-05-16 to 2024-03-30.
 - fundingRate is published only as monthly files.
+- Tardis spot quotes are 100 ms snapshots rebuilt from Binance's depth@100ms stream, not
+  every top-of-book change. `timestamp` is the exchange event time (ms precision),
+  `local_timestamp` is when Tardis received it (median ~4 ms later).
 
 Usage:
     python -m crypto_microstructure.download --date 2024-03-12 [--symbol BTCUSDT]
@@ -16,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import shutil
 import tempfile
@@ -29,6 +38,7 @@ from pathlib import Path
 import polars as pl
 
 BASE_URL = "https://data.binance.vision/data"
+TARDIS_URL = "https://datasets.tardis.dev/v1"
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
@@ -44,10 +54,11 @@ class Dataset:
     """
 
     name: str
-    remote_dir: str  # e.g. "futures/um/daily/bookTicker"
+    remote_dir: str  # binance: "futures/um/daily/bookTicker"; tardis: "binance/quotes"
     columns: dict[str, type[pl.DataType]]
     time_cols: tuple[str, ...]
     monthly: bool = False
+    source: str = "binance"  # "binance" (data.binance.vision) or "tardis"
 
 
 DATASETS: dict[str, Dataset] = {
@@ -104,6 +115,22 @@ DATASETS: dict[str, Dataset] = {
         },
         time_cols=("time",),
     ),
+    "spot_quotes": Dataset(
+        name="quotes",
+        remote_dir="binance/quotes",
+        columns={
+            "exchange": pl.String,
+            "symbol": pl.String,
+            "timestamp": pl.Int64,
+            "local_timestamp": pl.Int64,
+            "ask_qty": pl.Float64,
+            "ask_price": pl.Float64,
+            "bid_price": pl.Float64,
+            "bid_qty": pl.Float64,
+        },
+        time_cols=("timestamp", "local_timestamp"),
+        source="tardis",
+    ),
 }
 
 # Not downloadable: listed only so check_availability() documents the answer.
@@ -111,22 +138,31 @@ SPOT_BOOKTICKER_DIR = "spot/daily/bookTicker"
 
 
 def file_name(dataset: Dataset, symbol: str, day: date) -> str:
+    """Local file name; for Binance it is also the remote name."""
+    if dataset.source == "tardis":
+        return f"{symbol}-{dataset.name}-{day.isoformat()}.csv.gz"
     period = day.strftime("%Y-%m") if dataset.monthly else day.isoformat()
     return f"{symbol}-{dataset.name}-{period}.zip"
 
 
 def file_url(dataset: Dataset, symbol: str, day: date) -> str:
+    if dataset.source == "tardis":
+        return f"{TARDIS_URL}/{dataset.remote_dir}/{day:%Y/%m/%d}/{symbol}.csv.gz"
     return f"{BASE_URL}/{dataset.remote_dir}/{symbol}/{file_name(dataset, symbol, day)}"
 
 
 def url_exists(url: str) -> bool:
-    """HEAD request: True on 200, False on 404."""
-    req = urllib.request.Request(url, method="HEAD")
+    """Request the first byte: 200/206 -> True; 401/403/404 -> False.
+
+    A ranged GET instead of HEAD because Tardis does not answer HEAD like a file.
+    Tardis returns 401 for days outside the free tier.
+    """
+    req = urllib.request.Request(url, headers={"Range": "bytes=0-0"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status == 200
+            return resp.status in (200, 206)
     except urllib.error.HTTPError as e:
-        if e.code == 404:
+        if e.code in (401, 403, 404):
             return False
         raise
 
@@ -147,22 +183,40 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def download(url: str, dest: Path) -> Path:
-    """Download url to dest (skipped if present) and verify the published SHA-256."""
+def download(url: str, dest: Path, verify_checksum: bool = True) -> Path:
+    """Download url to dest (skipped if present).
+
+    Binance publishes a SHA-256 next to each file, which we verify. Tardis publishes none.
+    Either way we write to a .part file and rename at the end, so an interrupted
+    download never looks complete.
+    """
     if dest.exists():
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".part")
+    tmp = dest.with_name(dest.name + ".part")
     with urllib.request.urlopen(url, timeout=60) as resp, tmp.open("wb") as f:
         shutil.copyfileobj(resp, f, length=1 << 20)
-    with urllib.request.urlopen(url + ".CHECKSUM", timeout=30) as resp:
-        expected = resp.read().decode().split()[0]
-    actual = _sha256(tmp)
-    if actual != expected:
-        tmp.unlink()
-        raise ValueError(f"checksum mismatch for {url}: {actual} != {expected}")
+    if verify_checksum:
+        with urllib.request.urlopen(url + ".CHECKSUM", timeout=30) as resp:
+            expected = resp.read().decode().split()[0]
+        actual = _sha256(tmp)
+        if actual != expected:
+            tmp.unlink()
+            raise ValueError(f"checksum mismatch for {url}: {actual} != {expected}")
     tmp.rename(dest)
     return dest
+
+
+def extract_csv(archive: Path, out_dir: Path) -> Path:
+    """Unpack a Binance .zip (exactly one CSV inside) or a Tardis .csv.gz into out_dir."""
+    if archive.name.endswith(".csv.gz"):
+        csv_path = out_dir / archive.name.removesuffix(".gz")
+        with gzip.open(archive, "rb") as src, csv_path.open("wb") as dst:
+            shutil.copyfileobj(src, dst, length=1 << 20)
+        return csv_path
+    with zipfile.ZipFile(archive) as zf:
+        (member,) = zf.namelist()
+        return Path(zf.extract(member, out_dir))
 
 
 def _has_header(csv_path: Path) -> bool:
@@ -205,15 +259,19 @@ def csv_to_parquet(csv_path: Path, dataset: Dataset, out_path: Path) -> Path:
 def fetch(key: str, symbol: str, day: date, data_dir: Path = DATA_DIR) -> Path:
     """Download one dataset file and convert it; returns the Parquet path."""
     ds = DATASETS[key]
+    if ds.source == "tardis" and day.day != 1:
+        raise ValueError(f"{key}: Tardis free tier covers only the 1st of each month, got {day}")
     name = file_name(ds, symbol, day)
-    out = data_dir / "parquet" / key / name.replace(".zip", ".parquet")
+    out = data_dir / "parquet" / key / (name.split(".")[0] + ".parquet")
     if out.exists():
         return out
-    zip_path = download(file_url(ds, symbol, day), data_dir / "raw" / key / name)
-    with tempfile.TemporaryDirectory(dir=data_dir) as tmp, zipfile.ZipFile(zip_path) as zf:
-        (member,) = zf.namelist()  # each archive holds exactly one CSV
-        csv_path = Path(zf.extract(member, tmp))
-        csv_to_parquet(csv_path, ds, out)
+    archive = download(
+        file_url(ds, symbol, day),
+        data_dir / "raw" / key / name,
+        verify_checksum=ds.source == "binance",
+    )
+    with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
+        csv_to_parquet(extract_csv(archive, Path(tmp)), ds, out)
     return out
 
 

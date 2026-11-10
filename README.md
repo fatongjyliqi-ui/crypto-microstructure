@@ -14,33 +14,57 @@ pytest -q
 
 ## Data
 
-Public files from [data.binance.vision](https://data.binance.vision), converted to
-Parquet under `data/` (gitignored):
+Two days, converted to Parquet under `data/` (gitignored):
+
+- **2024-03-01** is the main day, with spot and perp data.
+- **2024-03-12** is a second, perp-only day (US CPI release at 12:30 UTC).
 
 ```bash
+python -m crypto_microstructure.download --date 2024-03-01
 python -m crypto_microstructure.download --date 2024-03-12
-python examples/plot_perp_spread.py
+python examples/plot_perp_spread.py --date 2024-03-01
+python examples/plot_perp_spread.py --date 2024-03-12
 ```
 
-| dataset | source path | notes |
+| dataset | source | notes |
 |---|---|---|
-| `perp_bookTicker` | `futures/um/daily/bookTicker` | only 2023-05-16 to 2024-03-30 |
-| `perp_aggTrades` | `futures/um/daily/aggTrades` | |
-| `perp_fundingRate` | `futures/um/monthly/fundingRate` | monthly files only |
-| `spot_trades` | `spot/daily/trades` | no header; timestamps in µs from 2025 |
+| `perp_bookTicker` | data.binance.vision `futures/um/daily/bookTicker` | only 2023-05-16 to 2024-03-30 |
+| `perp_aggTrades` | data.binance.vision `futures/um/daily/aggTrades` | |
+| `perp_fundingRate` | data.binance.vision `futures/um/monthly/fundingRate` | monthly files only |
+| `spot_trades` | data.binance.vision `spot/daily/trades` | no header; timestamps in µs from 2025 |
+| `spot_quotes` | [Tardis.dev](https://tardis.dev) `binance/quotes` | free tier: 1st of each month only |
 
-There is **no historical spot bookTicker** on data.binance.vision (spot only has
-`aggTrades`, `klines`, `trades`), so spot quotes are not available from this source.
+### Spot quotes come from Tardis
 
-### Live quotes
+data.binance.vision has **no spot bookTicker** (spot only has `aggTrades`, `klines` and
+`trades`). Spot best bid/ask therefore comes from the Tardis.dev free tier. Points to
+keep in mind:
 
-Spot and perp top-of-book are recorded from the Binance websocket `bookTicker` streams
-into `data/live/<venue>_bookTicker/<UTC day>/part-*.parquet`:
+- **100 ms snapshots, not every change.** Tardis rebuilds the quotes from Binance's
+  `depth@100ms` stream. For 2024-03-01, 94% of the gaps between updates are multiples
+  of 100 ms. Quote changes within one 100 ms window are not visible, so a trade
+  matched to the latest quote can be matched to a quote up to ~100 ms old.
+- **`timestamp`** is Binance's exchange event time (ms precision).
+  **`local_timestamp`** is when Tardis received it, a median ~4 ms later.
+- The perp `bookTicker`, by contrast, records every top-of-book change, with exchange
+  times `transaction_time` / `event_time`.
+
+### Known quirk: off-grid perp quotes
+
+On 2024-03-01, 274 of 39M perp bookTicker rows have a price off the 0.1 tick grid
+(e.g. an ask of 61431.87 for 0.001 BTC, 04:25–20:30 UTC). 2024-03-12 has none. They
+are kept in the Parquet files. Don't take the tick size as the smallest observed
+spread: it comes out as 0.06 that day.
+
+### Optional: live quotes
+
+The analysis does not depend on this. `record.py` records the Binance websocket
+`bookTicker` streams for spot and perp into `data/live/<venue>_bookTicker/<UTC day>/part-*.parquet`:
 
 ```bash
 caffeinate -i python -m crypto_microstructure.record --hours 48
 ```
 
 Spot bookTicker messages carry no exchange timestamp, so every row is stamped with
-`local_time` (receive time, µs) as the common clock; perp rows also keep the exchange
-`transaction_time` / `event_time`. `session` increments on every reconnect.
+`local_time`, the receive time in µs, as the common clock. Perp rows also keep the
+exchange `transaction_time` / `event_time`. `session` increments on every reconnect.
