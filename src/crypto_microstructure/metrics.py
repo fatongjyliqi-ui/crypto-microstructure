@@ -36,6 +36,22 @@ def attach_mid(
     ).drop("_key", "_qtime")
 
 
+def drop_trades_near_end(
+    trades: pl.LazyFrame, quotes: pl.LazyFrame, max_horizon: str
+) -> pl.LazyFrame:
+    """Drop trades whose t + max_horizon is after the last quote.
+
+    For those trades the backward as-of join would return the last quote of the file
+    as m_{t+h}, i.e. a stale mid rather than the mid at t + h.
+    """
+    last = quotes.select(pl.col("time").max().alias("_last_quote"))
+    return (
+        trades.join(last, how="cross")
+        .filter(pl.col("time").dt.offset_by(max_horizon) <= pl.col("_last_quote"))
+        .drop("_last_quote")
+    )
+
+
 def effective_spread_bps(trades_with_mid: pl.LazyFrame) -> pl.LazyFrame:
     """ES = 2 s (p - m_t) / m_t, in bps."""
     s = trade_sign(pl.col("is_buyer_maker"))

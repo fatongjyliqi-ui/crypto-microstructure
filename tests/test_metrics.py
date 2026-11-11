@@ -1,16 +1,17 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
 
 from crypto_microstructure.metrics import (
     attach_mid,
+    drop_trades_near_end,
     effective_spread_bps,
     markouts_bps,
     trade_sign,
 )
 
-T0 = datetime(2024, 3, 1)
+T0 = datetime(2024, 3, 1, tzinfo=timezone.utc)
 
 
 def ms(x: int) -> datetime:
@@ -71,3 +72,17 @@ def test_decomposition_es_equals_rs_plus_pi(book):
         lhs = out["es_bps"]
         rhs = out[f"rs_{h}_bps"] + out[f"pi_{h}_bps"]
         assert lhs.to_list() == pytest.approx(rhs.to_list(), rel=1e-9)
+
+
+def test_drop_trades_near_end(book):
+    trades, quotes = book
+    # Last quote at 2500.
+    #   "1s":    1500 + 1000 = 2500 <= 2500 -> keep;  2000 + 1000 = 3000 > 2500 -> drop
+    #   "500ms": 2000, 2500 both <= 2500     -> keep both (equality is kept)
+    #   "2s":    3500, 4000                  -> drop both
+    def kept(h):
+        return drop_trades_near_end(trades, quotes, h).collect()["time"].to_list()
+
+    assert kept("1s") == [ms(1500)]
+    assert kept("500ms") == [ms(1500), ms(2000)]
+    assert kept("2s") == []
