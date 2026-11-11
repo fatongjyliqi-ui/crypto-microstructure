@@ -31,6 +31,7 @@ TABLE_HORIZONS = ["1s", "5s", "30s"]
 MAX_HORIZON = timedelta(seconds=60)
 PAD = timedelta(minutes=1)  # quotes before the window, so the first trades have a mid
 BUCKETS = ["inside touch", "at touch", "1 through", "2-10 through", ">10 through"]
+MERGED = "1-10 through"  # extra group in the saved curves (for the plot), not in the tables
 N_BOOT = 1000
 SEED = 0
 RESULTS_DIR = DATA_DIR / "results"
@@ -106,17 +107,24 @@ def markout_table(pt: pl.DataFrame, horizons: list[str]) -> pl.DataFrame:
 
 
 def markout_cis(pt: pl.DataFrame, horizons: list[str], block: str) -> pl.DataFrame:
-    """Bootstrap CIs per bucket and horizon, in the layout of the saved curves."""
+    """Bootstrap CIs per bucket and horizon, in the layout of the saved curves.
+
+    Also adds MERGED = "1 through" + "2-10 through", bootstrapped from the trades
+    themselves (same blocks and seed, so the same draws), not combined from the two CIs.
+    """
     values = {f"markout_{h}_bps": h for h in horizons}
-    ci = block_bootstrap_wmean(
-        pt.with_columns(block=pl.col("time").dt.truncate(block)),
-        list(values),
-        weight_col="notional",
-        block_col="block",
-        group_col="bucket",
-        n_boot=N_BOOT,
-        seed=SEED,
+    blocked = pt.with_columns(
+        block=pl.col("time").dt.truncate(block),
+        merged=pl.col("bucket").replace({"1 through": MERGED, "2-10 through": MERGED}),
     )
+
+    def boot(group_col: str) -> pl.DataFrame:
+        return block_bootstrap_wmean(
+            blocked, list(values), weight_col="notional", block_col="block",
+            group_col=group_col, n_boot=N_BOOT, seed=SEED,
+        )
+
+    ci = pl.concat([boot("bucket"), boot("merged").filter(pl.col("group") == MERGED)])
     return ci.select(
         pl.col("group").alias("bucket"),
         pl.col("value").replace_strict(values).alias("horizon"),
@@ -128,7 +136,7 @@ def markout_cis(pt: pl.DataFrame, horizons: list[str], block: str) -> pl.DataFra
         pl.col("n").alias("n_aggtrades"),
         pl.col("weight").alias("notional"),
         pl.lit(block).alias("block"),
-    ).sort(pl.col("bucket").cast(pl.Enum([*BUCKETS, "all"])), "horizon_s")
+    ).sort(pl.col("bucket").cast(pl.Enum([*BUCKETS, MERGED, "all"])), "horizon_s")
 
 
 def with_ci(point: pl.DataFrame, ci: pl.DataFrame, horizons: list[str]) -> pl.DataFrame:
