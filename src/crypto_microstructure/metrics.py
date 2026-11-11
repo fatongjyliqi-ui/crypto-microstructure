@@ -2,6 +2,8 @@
 
 import polars as pl
 
+from crypto_microstructure.load import TICK
+
 BPS = 1e4
 
 
@@ -49,6 +51,53 @@ def drop_trades_near_end(
         trades.join(last, how="cross")
         .filter(pl.col("time").dt.offset_by(max_horizon) <= pl.col("_last_quote"))
         .drop("_last_quote")
+    )
+
+
+def group_taker_events(trades: pl.LazyFrame, tick: float = TICK) -> pl.LazyFrame:
+    """Group aggTrades into taker events (one aggressive order sweeping the book).
+
+    Rows sorted by trade id. A new event starts when any of these changes vs the row above:
+      - time               (a taker order fills within one engine timestamp)
+      - side               (is_buyer_maker)
+      - trade-id continuity (first_trade_id != previous last_trade_id + 1)
+      - price direction    (taker-side price not strictly worse than the row above)
+    The last rule is what separates two orders in the same millisecond: an aggTrade
+    already aggregates fills of one taker order at one price, so within an order each
+    next aggTrade is at a strictly higher (buy) or lower (sell) price. Trade ids are
+    contiguous across back-to-back orders, so continuity alone does not split them.
+    Two orders where the second starts beyond the first's last level stay merged:
+    public data cannot tell them apart.
+
+    Output per event: time, is_buyer_maker (side), qty, notional, vwap, n_levels,
+    ticks_walked, first_trade_id, last_trade_id.
+    """
+    s = trade_sign(pl.col("is_buyer_maker"))
+    new_event = (
+        (pl.col("time") != pl.col("time").shift())
+        | (pl.col("is_buyer_maker") != pl.col("is_buyer_maker").shift())
+        | (pl.col("first_trade_id") != pl.col("last_trade_id").shift() + 1)
+        | (s * (pl.col("price") - pl.col("price").shift()) <= 0)
+    ).fill_null(True)
+    return (
+        trades.sort("first_trade_id")
+        .with_columns(_event=new_event.cum_sum())
+        .group_by("_event", maintain_order=True)
+        .agg(
+            pl.col("time").first(),
+            pl.col("is_buyer_maker").first(),
+            pl.col("qty").sum(),
+            (pl.col("price") * pl.col("qty")).sum().alias("notional"),
+            pl.len().alias("n_levels"),
+            ((pl.col("price").max() - pl.col("price").min()) / tick)
+            .round(0)
+            .cast(pl.Int64)
+            .alias("ticks_walked"),
+            pl.col("first_trade_id").first(),
+            pl.col("last_trade_id").last(),
+        )
+        .with_columns(vwap=pl.col("notional") / pl.col("qty"))
+        .drop("_event")
     )
 
 

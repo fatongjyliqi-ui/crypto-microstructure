@@ -14,7 +14,7 @@ TICK = 0.1  # BTCUSDT perp price tick
 
 class PerpDay(NamedTuple):
     quotes: pl.LazyFrame  # time, bid, ask
-    trades: pl.LazyFrame  # time, price, qty, is_buyer_maker, off_grid
+    trades: pl.LazyFrame  # time, price, qty, is_buyer_maker, first/last_trade_id, off_grid
     n_off_grid_dropped: int
 
 
@@ -48,6 +48,8 @@ def load_perp(day: date, data_dir=DATA_DIR) -> PerpDay:
         "price",
         "qty",
         "is_buyer_maker",
+        "first_trade_id",
+        "last_trade_id",
         (~on_grid("price")).alias("off_grid"),
     )
     return PerpDay(quotes, trades, n_dropped)

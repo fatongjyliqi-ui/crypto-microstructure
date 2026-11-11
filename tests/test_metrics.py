@@ -7,6 +7,7 @@ from crypto_microstructure.metrics import (
     attach_mid,
     drop_trades_near_end,
     effective_spread_bps,
+    group_taker_events,
     markouts_bps,
     trade_sign,
 )
@@ -86,3 +87,40 @@ def test_drop_trades_near_end(book):
     assert kept("1s") == [ms(1500)]
     assert kept("500ms") == [ms(1500), ms(2000)]
     assert kept("2s") == []
+
+
+@pytest.fixture
+def sweep() -> pl.LazyFrame:
+    # aggTrades in trade-id order. Hand-computed events:
+    #   E1  t=1000 buy, ids 1-6, three levels 100.0 / 100.1 / 100.3 (strictly rising)
+    #       qty 1 + 2 + 1 = 4, notional 100.0 + 200.2 + 100.3 = 400.5,
+    #       vwap 400.5 / 4 = 100.125, ticks walked (100.3 - 100.0) / 0.1 = 3
+    #   E2  t=1000 buy, id 7 @ 100.3: same ms, same side, contiguous id, but price not
+    #       strictly higher -> a second order that starts at E1's last level
+    #   E3  t=1000 sell, id 8 @ 100.2: side changes
+    #   E4  t=1000 sell, id 10 @ 100.1: falling price, but id gap (9 missing)
+    #   E5  t=2000 sell, id 11 @ 100.0: contiguous and falling, but time changes
+    return pl.LazyFrame(
+        {
+            "time": [ms(1000)] * 6 + [ms(2000)],
+            "price": [100.0, 100.1, 100.3, 100.3, 100.2, 100.1, 100.0],
+            "qty": [1.0, 2.0, 1.0, 0.5, 1.0, 1.0, 1.0],
+            "is_buyer_maker": [False, False, False, False, True, True, True],
+            "first_trade_id": [1, 3, 4, 7, 8, 10, 11],
+            "last_trade_id": [2, 3, 6, 7, 8, 10, 11],
+        }
+    )
+
+
+def test_group_taker_events(sweep):
+    ev = group_taker_events(sweep).collect()
+    assert ev.height == 5
+    assert ev["first_trade_id"].to_list() == [1, 7, 8, 10, 11]
+    assert ev["last_trade_id"].to_list() == [6, 7, 8, 10, 11]
+    assert ev["n_levels"].to_list() == [3, 1, 1, 1, 1]
+    assert ev["ticks_walked"].to_list() == [3, 0, 0, 0, 0]
+    assert ev["qty"].to_list() == pytest.approx([4.0, 0.5, 1.0, 1.0, 1.0])
+    assert ev["notional"][0] == pytest.approx(400.5)
+    assert ev["vwap"].to_list() == pytest.approx([100.125, 100.3, 100.2, 100.1, 100.0])
+    assert ev["is_buyer_maker"].to_list() == [False, False, True, True, True]
+    assert ev["time"].to_list() == [ms(1000)] * 4 + [ms(2000)]
