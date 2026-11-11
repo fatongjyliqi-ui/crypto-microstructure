@@ -124,3 +124,22 @@ def test_group_taker_events(sweep):
     assert ev["vwap"].to_list() == pytest.approx([100.125, 100.3, 100.2, 100.1, 100.0])
     assert ev["is_buyer_maker"].to_list() == [False, False, True, True, True]
     assert ev["time"].to_list() == [ms(1000)] * 4 + [ms(2000)]
+
+
+def test_attach_mid_same_timestamp_takes_higher_update_id():
+    # Two quotes stamped 1000, given in reversed update_id order:
+    #   update_id 20: 100.0 / 100.1 -> mid 100.05   (the later quote)
+    #   update_id 10:  99.9 / 100.0 -> mid  99.95
+    # The trade at 2000 must see the quote with the higher update_id, not the last row.
+    quotes = pl.LazyFrame(
+        {
+            "time": [ms(1000), ms(1000)],
+            "bid": [100.0, 99.9],
+            "ask": [100.1, 100.0],
+            "update_id": [20, 10],
+        }
+    )
+    trades = pl.LazyFrame({"time": [ms(2000)], "price": [100.1], "is_buyer_maker": [False]})
+    out = attach_mid(trades, quotes).collect()
+    assert out["mid"].to_list() == pytest.approx([100.05])
+    assert "update_id" not in out.columns

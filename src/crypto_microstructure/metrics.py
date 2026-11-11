@@ -25,11 +25,21 @@ def attach_mid(
 
     Strictness is implemented by shifting the lookup key back by 1 microsecond,
     so a quote stamped exactly at the lookup time is excluded.
+
+    Several quotes can share a timestamp; the as-of join takes the last of them in
+    sort order. If `quotes` has an `update_id`, ties are ordered by it (the exchange's
+    sequence number); otherwise their input order is kept.
     """
+    has_update_id = "update_id" in quotes.collect_schema().names()
     q = quotes.select(
         pl.col("time").alias("_qtime"),
         ((pl.col("bid") + pl.col("ask")) / 2).alias(name),
-    ).sort("_qtime")
+        *(["update_id"] if has_update_id else []),
+    )
+    if has_update_id:
+        q = q.sort(["_qtime", "update_id"]).drop("update_id")
+    else:
+        q = q.sort("_qtime", maintain_order=True)
     t = trades.with_columns(
         pl.col("time").dt.offset_by(offset).dt.offset_by("-1us").alias("_key")
     ).sort("_key")

@@ -13,7 +13,7 @@ TICK = 0.1  # BTCUSDT perp price tick
 
 
 class PerpDay(NamedTuple):
-    quotes: pl.LazyFrame  # time, bid, ask
+    quotes: pl.LazyFrame  # time, bid, ask, update_id
     trades: pl.LazyFrame  # time, price, qty, is_buyer_maker, first/last_trade_id, off_grid
     n_off_grid_dropped: int
 
@@ -42,6 +42,7 @@ def load_perp(day: date, data_dir=DATA_DIR) -> PerpDay:
         pl.col("transaction_time").alias("time"),
         pl.col("bid_price").alias("bid"),
         pl.col("ask_price").alias("ask"),
+        "update_id",  # orders quotes that share a timestamp
     )
     trades = agg.select(
         pl.col("transact_time").alias("time"),
