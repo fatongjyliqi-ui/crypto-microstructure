@@ -2,11 +2,12 @@
 
 Usage:
     python examples/perp_taker_events.py --date 2024-03-01                 # full UTC day
+    python examples/perp_taker_events.py --symbol XRPUSDT --date 2024-03-01  # other perp
     python examples/perp_taker_events.py --date 2024-03-01 --start 14:00 --end 15:00
     python examples/perp_taker_events.py --date 2024-03-01 --block 1m     # bootstrap blocks
 
 Writes the markout curves (all horizons, by bucket, with CIs) to
-data/results/markouts_<date>_<block>.parquet for plotting.
+data/results/markouts_<symbol>_<date>_<block>.parquet for plotting.
 """
 
 import argparse
@@ -15,7 +16,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import polars as pl
 
 from crypto_microstructure.download import DATA_DIR
-from crypto_microstructure.load import TICK, load_perp
+from crypto_microstructure.load import load_perp
 from crypto_microstructure.metrics import (
     attach_mid,
     drop_trades_near_end,
@@ -52,11 +53,11 @@ def attach_touch(trades: pl.LazyFrame, quotes: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def position_bucket() -> pl.Expr:
+def position_bucket(tick: float) -> pl.Expr:
     """Ticks through the touch (taker side) at the last quote before the trade."""
     s = trade_sign(pl.col("is_buyer_maker"))
     touch = pl.when(s == 1).then(pl.col("ask")).otherwise(pl.col("bid"))
-    k = (s * (pl.col("price") - touch) / TICK).round(0)
+    k = (s * (pl.col("price") - touch) / tick).round(0)
     return (
         pl.when(k < 0).then(pl.lit(BUCKETS[0]))
         .when(k == 0).then(pl.lit(BUCKETS[1]))
@@ -171,6 +172,7 @@ def delta(base: pl.DataFrame, alt: pl.DataFrame, key: str, cols: list[str]) -> p
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--date", type=date.fromisoformat, default=date(2024, 3, 1))
     parser.add_argument("--start", type=time.fromisoformat, default=time(0, 0))
     parser.add_argument("--end", type=time.fromisoformat, default=None, help="default: 24:00")
@@ -183,7 +185,7 @@ def main() -> None:
         else datetime.combine(args.date + timedelta(days=1), time(0), tzinfo=timezone.utc)
     )
 
-    day = load_perp(args.date)
+    day = load_perp(args.date, symbol=args.symbol)
     # Materialize quotes once, sorted by (time, update_id), so the repeated as-of joins
     # below do not rescan the file.
     quotes = (
@@ -202,7 +204,7 @@ def main() -> None:
 
     # Taker events; quintiles fixed on the full sample so robustness deltas compare
     # the same size buckets.
-    ev = group_taker_events(trades.lazy()).collect()
+    ev = group_taker_events(trades.lazy(), tick=day.tick).collect()
     ev = ev.with_columns(
         first_in_ms=pl.int_range(pl.len()).over("time") == 0,
         quintile=pl.format(
@@ -227,7 +229,7 @@ def main() -> None:
 
     pt = (
         effective_spread_bps(markouts_bps(attach_touch(trades.lazy(), quotes), quotes, HORIZONS))
-        .with_columns(bucket=position_bucket(), notional=pl.col("price") * pl.col("qty"))
+        .with_columns(bucket=position_bucket(day.tick), notional=pl.col("price") * pl.col("qty"))
         .collect()
     )
 
@@ -241,13 +243,14 @@ def main() -> None:
     ci = markout_cis(pt, HORIZONS, args.block)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULTS_DIR / f"markouts_{args.date}_{args.block}.parquet"
+    out_path = RESULTS_DIR / f"markouts_{args.symbol}_{args.date}_{args.block}.parquet"
     ci.write_parquet(out_path)
 
     ev_cols = ["n_events", "mean_es_bps", "vw_es_bps"]
     mk_cols = ["n_aggtrades", "vw_es_bps", *[f"markout_{h}" for h in TABLE_HORIZONS]]
     print(
-        f"\n=== {start:%Y-%m-%d %H:%M} – {end:%Y-%m-%d %H:%M} UTC ===\n"
+        f"\n=== {args.symbol} perp (tick {day.tick:g}) "
+        f"{start:%Y-%m-%d %H:%M} – {end:%Y-%m-%d %H:%M} UTC ===\n"
         f"aggTrades in window: {n_window} | dropped near end ({HORIZONS[-1]}): "
         f"{n_window - trades.height} | taker events: {ev.height} | "
         f"events without a mid: {ev['mid'].null_count()} | "

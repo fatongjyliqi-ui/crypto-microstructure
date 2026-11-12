@@ -2,8 +2,6 @@
 
 import polars as pl
 
-from crypto_microstructure.load import TICK
-
 BPS = 1e4
 
 
@@ -64,7 +62,7 @@ def drop_trades_near_end(
     )
 
 
-def group_taker_events(trades: pl.LazyFrame, tick: float = TICK) -> pl.LazyFrame:
+def group_taker_events(trades: pl.LazyFrame, tick: float) -> pl.LazyFrame:
     """Group aggTrades into taker events (one aggressive order sweeping the book).
 
     Rows sorted by trade id. A new event starts when any of these changes vs the row above:

@@ -113,7 +113,7 @@ def sweep() -> pl.LazyFrame:
 
 
 def test_group_taker_events(sweep):
-    ev = group_taker_events(sweep).collect()
+    ev = group_taker_events(sweep, tick=0.1).collect()
     assert ev.height == 5
     assert ev["first_trade_id"].to_list() == [1, 7, 8, 10, 11]
     assert ev["last_trade_id"].to_list() == [6, 7, 8, 10, 11]

@@ -1,7 +1,8 @@
-"""Effective spread and maker markouts of the BTCUSDT perp over one intraday window.
+"""Effective spread and maker markouts of one USD-M perp over one intraday window.
 
 Usage:
     python examples/perp_metrics_window.py --date 2024-03-01 --start 14:00 --end 15:00
+    python examples/perp_metrics_window.py --symbol XRPUSDT --date 2024-03-01
 """
 
 import argparse
@@ -23,6 +24,7 @@ PAD = timedelta(minutes=1)  # quotes before the window, so the first trades have
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--date", type=date.fromisoformat, default=date(2024, 3, 1))
     parser.add_argument("--start", type=time.fromisoformat, default=time(14, 0))
     parser.add_argument("--end", type=time.fromisoformat, default=time(15, 0))
@@ -30,8 +32,11 @@ def main() -> None:
     start = datetime.combine(args.date, args.start, tzinfo=timezone.utc)
     end = datetime.combine(args.date, args.end, tzinfo=timezone.utc)
 
-    day = load_perp(args.date)
-    print(f"off-grid quotes dropped (whole day): {day.n_off_grid_dropped}")
+    day = load_perp(args.date, symbol=args.symbol)
+    print(
+        f"{args.symbol} perp, tick {day.tick:g} (observed {day.observed_tick:g}) | "
+        f"off-grid quotes dropped (whole day): {day.n_off_grid_dropped}"
+    )
 
     trades = day.trades.filter(pl.col("time").is_between(start, end, closed="left"))
     quotes = day.quotes.filter(

@@ -4,7 +4,7 @@
 group), not averaged from the "1 through" and "2-10 through" curves.
 
 Usage:
-    python examples/perp_taker_events.py --date 2024-03-01   # writes the 5m results
+    python examples/perp_taker_events.py --date 2024-03-01   # writes the BTCUSDT 5m results
     python examples/perp_taker_events.py --date 2024-03-12
     python examples/plot_markouts.py
 """
@@ -17,6 +17,7 @@ import polars as pl
 from crypto_microstructure.download import DATA_DIR
 
 DAYS = [("2024-03-01", "2024-03-01 (normal day)"), ("2024-03-12", "2024-03-12 (US CPI 12:30 UTC)")]
+SYMBOL = "BTCUSDT"
 BLOCK = "5m"
 PLOTS_DIR = Path(__file__).resolve().parent.parent / "plots"
 
@@ -43,7 +44,7 @@ def spread_labels(ys: list[float], gap: float) -> list[float]:
 def main() -> None:
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.2), sharey=True, facecolor=SURFACE)
     for ax, (day, panel_title) in zip(axes, DAYS, strict=True):
-        df = pl.read_parquet(DATA_DIR / "results" / f"markouts_{day}_{BLOCK}.parquet")
+        df = pl.read_parquet(DATA_DIR / "results" / f"markouts_{SYMBOL}_{day}_{BLOCK}.parquet")
         ax.set_facecolor(SURFACE)
         ax.axhline(0, color=MUTED, lw=1, ls=(0, (4, 3)), zorder=1)
         ends = []
