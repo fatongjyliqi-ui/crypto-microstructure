@@ -5,6 +5,7 @@ import pytest
 
 from crypto_microstructure.metrics import (
     attach_mid,
+    attach_touch,
     drop_trades_near_end,
     effective_spread_bps,
     group_taker_events,
@@ -124,6 +125,9 @@ def test_group_taker_events(sweep):
     assert ev["vwap"].to_list() == pytest.approx([100.125, 100.3, 100.2, 100.1, 100.0])
     assert ev["is_buyer_maker"].to_list() == [False, False, True, True, True]
     assert ev["time"].to_list() == [ms(1000)] * 4 + [ms(2000)]
+    # E1 buys 100.0 -> 100.1 -> 100.3: first 100.0, worst (highest) 100.3; E4 sells at 100.1.
+    assert ev["first_price"].to_list() == pytest.approx([100.0, 100.3, 100.2, 100.1, 100.0])
+    assert ev["worst_price"].to_list() == pytest.approx([100.3, 100.3, 100.2, 100.1, 100.0])
 
 
 def test_attach_mid_same_timestamp_takes_higher_update_id():
@@ -143,3 +147,20 @@ def test_attach_mid_same_timestamp_takes_higher_update_id():
     out = attach_mid(trades, quotes).collect()
     assert out["mid"].to_list() == pytest.approx([100.05])
     assert "update_id" not in out.columns
+
+
+def test_attach_touch_strictly_before_and_update_id_ties():
+    # Quotes at 1000 (two, reversed update_id order) and at 1500.
+    #   trade at 1500 must not see the 1500 quote -> last quote at 1000 by update_id = uid 20
+    quotes = pl.LazyFrame(
+        {
+            "time": [ms(1000), ms(1000), ms(1500)],
+            "bid": [100.0, 99.9, 101.0],
+            "ask": [100.1, 100.0, 101.1],
+            "update_id": [20, 10, 30],
+        }
+    )
+    trades = pl.LazyFrame({"time": [ms(1500), ms(1600)], "price": [100.1, 101.1]})
+    out = attach_touch(trades, quotes).collect()
+    assert out["bid"].to_list() == [100.0, 101.0]
+    assert out["ask"].to_list() == [100.1, 101.1]

@@ -46,6 +46,26 @@ def attach_mid(
     ).drop("_key", "_qtime")
 
 
+def attach_touch(trades: pl.LazyFrame, quotes: pl.LazyFrame) -> pl.LazyFrame:
+    """Attach bid and ask of the last quote strictly before each trade.
+
+    Same lookup rule as attach_mid (key shifted back by 1 us; same-timestamp quotes
+    ordered by update_id if present, else input order kept).
+    """
+    has_update_id = "update_id" in quotes.collect_schema().names()
+    q = quotes.select(
+        pl.col("time").alias("_qtime"), "bid", "ask", *(["update_id"] if has_update_id else [])
+    )
+    if has_update_id:
+        q = q.sort(["_qtime", "update_id"]).drop("update_id")
+    else:
+        q = q.sort("_qtime", maintain_order=True)
+    t = trades.with_columns(pl.col("time").dt.offset_by("-1us").alias("_key")).sort("_key")
+    return t.join_asof(q, left_on="_key", right_on="_qtime", strategy="backward").drop(
+        "_key", "_qtime"
+    )
+
+
 def drop_trades_near_end(
     trades: pl.LazyFrame, quotes: pl.LazyFrame, max_horizon: str
 ) -> pl.LazyFrame:
@@ -78,7 +98,9 @@ def group_taker_events(trades: pl.LazyFrame, tick: float) -> pl.LazyFrame:
     public data cannot tell them apart.
 
     Output per event: time, is_buyer_maker (side), qty, notional, vwap, n_levels,
-    ticks_walked, first_trade_id, last_trade_id.
+    ticks_walked, first_price, worst_price, first_trade_id, last_trade_id.
+    worst_price is the price of the last aggTrade in id order, which by the price-direction
+    rule is the worst price for the taker (highest for a buy, lowest for a sell).
     """
     s = trade_sign(pl.col("is_buyer_maker"))
     new_event = (
@@ -101,6 +123,8 @@ def group_taker_events(trades: pl.LazyFrame, tick: float) -> pl.LazyFrame:
             .round(0)
             .cast(pl.Int64)
             .alias("ticks_walked"),
+            pl.col("price").first().alias("first_price"),
+            pl.col("price").last().alias("worst_price"),
             pl.col("first_trade_id").first(),
             pl.col("last_trade_id").last(),
         )

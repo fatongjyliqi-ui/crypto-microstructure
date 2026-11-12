@@ -68,3 +68,12 @@ caffeinate -i python -m crypto_microstructure.record --hours 48
 Spot bookTicker messages carry no exchange timestamp, so every row is stamped with
 `local_time`, the receive time in µs, as the common clock. Perp rows also keep the
 exchange `transaction_time` / `event_time`. `session` increments on every reconnect.
+
+## Limitations
+
+- **Fees are not included.** Markouts, break-even spreads and model spreads are before
+  maker/taker fees and rebates. Binance's current pages list 0.02% maker / 0.05% taker
+  for the base USDⓈ-M futures tier, but I found no source dated March 2024, and the fee
+  of the makers in the data (VIP tier, rebates, liquidity-provider programs) is unknown.
+  At the BTCUSDT perp touch the half-spread is ~0.008 bps, far below any plausible
+  non-rebated maker fee, so the touch is only profitable with rebates or a high tier.

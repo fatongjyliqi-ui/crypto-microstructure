@@ -19,6 +19,7 @@ from crypto_microstructure.download import DATA_DIR
 from crypto_microstructure.load import load_perp
 from crypto_microstructure.metrics import (
     attach_mid,
+    attach_touch,
     drop_trades_near_end,
     effective_spread_bps,
     group_taker_events,
@@ -40,17 +41,6 @@ RESULTS_DIR = DATA_DIR / "results"
 
 def horizon_seconds(h: str) -> float:
     return float(h[:-2]) / 1000 if h.endswith("ms") else float(h[:-1])
-
-
-def attach_touch(trades: pl.LazyFrame, quotes: pl.LazyFrame) -> pl.LazyFrame:
-    """Bid/ask of the last quote strictly before each trade (same rule as attach_mid,
-    including ties at one timestamp ordered by update_id)."""
-    q = quotes.select(pl.col("time").alias("_qtime"), "bid", "ask", "update_id")
-    q = q.sort(["_qtime", "update_id"]).drop("update_id")
-    t = trades.with_columns(pl.col("time").dt.offset_by("-1us").alias("_key")).sort("_key")
-    return t.join_asof(q, left_on="_key", right_on="_qtime", strategy="backward").drop(
-        "_key", "_qtime"
-    )
 
 
 def position_bucket(tick: float) -> pl.Expr:
