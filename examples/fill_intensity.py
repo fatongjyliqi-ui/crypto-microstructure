@@ -2,6 +2,7 @@
 
 Usage:
     python examples/fill_intensity.py --date 2024-03-01
+    python examples/fill_intensity.py --date 2024-03-12 --symbols BTCUSDT XRPUSDT
 
 For every symbol in TICKS: taker events, X = ticks the worst fill lies beyond the touch,
 kappa per tick for censoring K = 1, 5, inf with 5-minute block-bootstrap CIs, for all
@@ -87,12 +88,14 @@ def survival(x: np.ndarray, variant: str) -> pl.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--date", type=date.fromisoformat, default=date(2024, 3, 1))
+    # The output file holds only the symbols of this run.
+    parser.add_argument("--symbols", nargs="+", default=list(TICKS), choices=list(TICKS))
     args = parser.parse_args()
     end = datetime.combine(args.date + timedelta(days=1), time(0), tzinfo=timezone.utc)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     rows = []
-    for symbol in TICKS:
+    for symbol in args.symbols:
         d = load_perp(args.date, symbol=symbol)
         quotes = d.quotes.sort(["time", "update_id"]).collect()
         exposure = one_tick_exposure_s(quotes, d.tick, end)

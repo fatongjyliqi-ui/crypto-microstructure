@@ -3,6 +3,7 @@
 Usage:
     python examples/fill_intensity.py --date 2024-03-01   # writes the intensity inputs
     python examples/glft_table.py --date 2024-03-01
+    python examples/glft_table.py --date 2024-03-12 --symbols BTCUSDT XRPUSDT
 
 (a) GLFT optimal spread at q = 0 (exact stationary solution, inventory bound Q lots),
     kappa from censoring K = 1, A between A_through and A_touched.
@@ -10,6 +11,7 @@ Usage:
 (b) Observed quoted spread, time-weighted.
 (c) Break-even spread for fills at the touch: S_be = 2 E_w[s (m_{t+h} - m_t)] in ticks,
     notional-weighted, with 5-minute block-bootstrap CIs (h = 1 s, 30 s). Before fees.
+    Robustness: only touch fills from single-level taker events (no sweeps).
 
 Units: one lot = LOT_USDT of notional. Wealth in the model is counted in tick x lot, so a
 CARA coefficient gamma_usdt (1/USDT) becomes gamma = gamma_usdt * LOT_USDT * tick / price
@@ -27,6 +29,7 @@ from crypto_microstructure.load import TICKS, load_perp
 from crypto_microstructure.metrics import (
     attach_touch,
     drop_trades_near_end,
+    group_taker_events,
     markouts_bps,
     trade_sign,
 )
@@ -61,9 +64,22 @@ def observed_spread(quotes: pl.DataFrame, tick: float, end: datetime) -> dict:
 
 
 def break_even(trades: pl.LazyFrame, quotes: pl.LazyFrame, tick: float) -> dict:
-    """Notional-weighted S_be = 2 s (m_{t+h} - m_t) in ticks over fills at the touch."""
+    """Notional-weighted S_be = 2 s (m_{t+h} - m_t) in ticks over fills at the touch.
+
+    Two samples: all touch fills ("sbe_*"), and only touch fills from single-level taker
+    events ("sbe1_*"), i.e. without the touch leg of sweeps. A single-level event can
+    still consume the whole touch level.
+    """
     s = trade_sign(pl.col("is_buyer_maker"))
     touch = pl.when(s == 1).then(pl.col("ask")).otherwise(pl.col("bid"))
+    # Each aggTrade belongs to the event whose first_trade_id is the largest one <= its own
+    # (events are contiguous trade-id ranges).
+    events = (
+        group_taker_events(trades, tick=tick)
+        .select(pl.col("first_trade_id").alias("event_id"), "n_levels")
+        .collect()
+        .sort("event_id")
+    )
     pt = (
         markouts_bps(attach_touch(trades, quotes), quotes, HORIZONS)
         .filter(((s * (pl.col("price") - touch)) / tick).round(0) == 0)
@@ -77,12 +93,21 @@ def break_even(trades: pl.LazyFrame, quotes: pl.LazyFrame, tick: float) -> dict:
             },
         )
         .collect()
+        .sort("first_trade_id")
+        .join_asof(events, left_on="first_trade_id", right_on="event_id", strategy="backward")
     )
-    ci = block_bootstrap_wmean(pt, [f"sbe_{h}" for h in HORIZONS], "notional", "block")
-    out = {"n_touch_fills": pt.height}
-    for r in ci.iter_rows(named=True):
-        h = r["value"].removeprefix("sbe_")
-        out[f"sbe_{h}"], out[f"sbe_{h}_lo"], out[f"sbe_{h}_hi"] = r["point"], r["ci_lo"], r["ci_hi"]
+    single = pt.filter(pl.col("n_levels") == 1)
+    out = {
+        "n_touch_fills": pt.height,
+        "n_touch_fills_single": single.height,
+        "notional_share_single": float(single["notional"].sum() / pt["notional"].sum()),
+    }
+    for prefix, df in [("sbe", pt), ("sbe1", single)]:
+        ci = block_bootstrap_wmean(df, [f"sbe_{h}" for h in HORIZONS], "notional", "block")
+        for r in ci.iter_rows(named=True):
+            h = r["value"].removeprefix("sbe_")
+            col = f"{prefix}_{h}"
+            out[col], out[f"{col}_lo"], out[f"{col}_hi"] = r["point"], r["ci_lo"], r["ci_hi"]
     return out
 
 
@@ -102,6 +127,7 @@ def model_spreads(r: dict) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--date", type=date.fromisoformat, default=date(2024, 3, 1))
+    parser.add_argument("--symbols", nargs="+", default=list(TICKS), choices=list(TICKS))
     args = parser.parse_args()
     end = datetime.combine(args.date + timedelta(days=1), time(0), tzinfo=timezone.utc)
 
@@ -109,7 +135,7 @@ def main() -> None:
         pl.col("variant") == "all"
     )
     rows = []
-    for symbol in TICKS:
+    for symbol in args.symbols:
         r1 = inten.filter((pl.col("symbol") == symbol) & (pl.col("K") == "1")).row(0, named=True)
         r5 = inten.filter((pl.col("symbol") == symbol) & (pl.col("K") == "5")).row(0, named=True)
         d = load_perp(args.date, symbol=symbol)
@@ -153,6 +179,14 @@ def main() -> None:
             pl.col("obs_median_ticks").alias("(b) median"),
             *[ci(f"sbe_{h}").alias(f"(c) S_be {h}") for h in HORIZONS],
             "n_touch_fills",
+        ))
+        print("\nRobustness (c): touch fills from single-level events only (no sweeps)")
+        print(table.select(
+            "symbol",
+            *[ci(f"sbe_{h}").alias(f"S_be {h} all") for h in HORIZONS],
+            *[ci(f"sbe1_{h}").alias(f"S_be {h} single-level") for h in HORIZONS],
+            pl.col("notional_share_single").alias("notional share single"),
+            "n_touch_fills_single",
         ))
     print(f"wrote {out}")
 
