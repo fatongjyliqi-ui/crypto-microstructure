@@ -7,9 +7,19 @@ lose 0.54–0.94 bps (notional-weighted, before fees); fills one to ten ticks th
 lose 0.96–1.40 bps. Expressed as a quoted spread, breaking even at the touch would take
 69–129 ticks for BTCUSDT and 1.7–2.3 ticks for XRPUSDT (1 s and 30 s horizons, both days),
 against one tick observed. A Guéant–Lehalle–Fernandez-Tapia (GLFT) model calibrated to the
-same fills gives 0.5–1.6 ticks for seven perps, close to the observed spread, but because
-its mid moves independently of fills: the model has no adverse selection, and its spread is
-set by the decay of the fill rate with distance from the mid.
+same fills gives 0.5–1.6 ticks for seven perps and so matches the observed spread. It cannot
+explain the break-even spread, because in the model the mid moves independently of fills.
+
+- **Observed:** the BTCUSDT book is at one tick 98.5–99.6 % of the time. The half-spread
+  at the touch is ≈ 0.008 bps for BTCUSDT and 0.84 bps for XRPUSDT.
+- **Break-even:** at 1 s the break-even spread is 1.1–3.4 bps for all seven perps on
+  2024-03-01, i.e. 1.7–69 ticks (118 ticks for BTCUSDT on 03-12). Touch fills on BTCUSDT
+  lose 0.54–0.94 bps at 1–60 s.
+- **Model:** at realistic risk aversion the GLFT spread equals 2/κ = 0.5–1.6 ticks. It
+  matches (b) and lies below (c) by a factor of 3–7 for the six other perps and 57–88 for
+  BTCUSDT.
+
+![Maker markouts by depth](plots/markouts_by_depth_5m.png)
 
 All numbers are from two days of public data and are before fees and rebates (see
 [Limitations](#5-limitations)).
@@ -18,8 +28,11 @@ All numbers are from two days of public data and are before fees and rebates (se
 
 ## 1. Question
 
-Market makers on a tick-constrained book cannot quote wider than they are forced to by the
-tick, or narrower than one tick. Three spreads are compared per symbol, in ticks:
+Market makers cannot quote narrower than one tick, but nothing stops them from quoting
+wider. All seven perps sit at one tick almost all the time. So the question is whether
+makers would quote wider if they priced adverse selection and inventory risk: is one tick
+the spread they would choose, or only a floor they are pressed against? Three spreads are
+compared per symbol, in ticks:
 
 - **(a) model:** the optimal spread of an inventory-averse market maker (GLFT 2013) with a
   fill intensity λ(δ) = A e^(−κδ) estimated from the trades of the day;
@@ -144,14 +157,14 @@ Notional-weighted ES per taker event, by notional quintile:
 | Q4 | 4 897 – 19 141 | 0.111 | 0.341 | 1.64 |
 | Q5 | 19 141 – 16 M | 1.302 | 2.982 | 4.89 |
 
-The largest 20 % of events carry 90 % of the notional (89 % on 03-12) and pay almost all of
-the effective spread, because they walk the book.
+The largest 20 % of events carry 90 % of the notional (89 % on 03-12). Measured as
+notional × ES, they account for 99.1 % of the effective spread paid on 03-01 (98.7 % on
+03-12), because they walk the book. These shares are computed from the rounded table.
 
 ### Maker markouts by depth (BTCUSDT)
 
-![Maker markouts by depth](plots/markouts_by_depth_5m.png)
-
-Notional-weighted maker markouts per aggTrade in bps of the mid, with 95 % CIs:
+See the figure under the summary. Notional-weighted maker markouts per aggTrade, in bps of
+the mid, with 95 % CIs:
 
 | bucket | share 03-01 | 03-01, 1 s | 03-01, 30 s | 03-12, 1 s | 03-12, 30 s |
 |---|---|---|---|---|---|
@@ -179,24 +192,25 @@ over touch fills, before fees.
 
 **2024-03-01**
 
-| symbol | tick (bps) | σ (ticks/√s) | 2/κ, K = 1 | (a) γ = 1e-4/USDT | (a) γ/κ = 0.1 | (b) mean | (c) S_be 1 s | (c) S_be 30 s |
-|---|---|---|---|---|---|---|---|---|
-| XRPUSDT | 1.69 | 0.74 | 0.49 [0.48, 0.50] | 0.49 | 0.57–1.53 | 1.00 | 1.66 [1.63, 1.69] | 1.98 [1.86, 2.10] |
-| ADAUSDT | 1.47 | 1.21 | 0.64 [0.62, 0.65] | 0.64 | 0.83–2.02 | 1.00 | 2.14 [2.08, 2.21] | 2.07 [1.79, 2.32] |
-| LTCUSDT | 1.19 | 1.48 | 0.72 [0.70, 0.73] | 0.72 | 1.02–2.36 | 1.00 | 2.87 [2.72, 3.08] | 3.21 [2.76, 3.63] |
-| LINKUSDT | 0.50 | 2.35 | 1.01 [0.99, 1.02] | 1.01 | 1.75–3.35 | 1.01 | 4.54 [4.36, 4.73] | 5.33 [4.64, 6.00] |
-| BTCUSDT | 0.016 | 63.5 | 1.21 [1.19, 1.23] | 1.21 | 7.41–9.41 | 1.04 | 68.8 [65.0, 73.7] | 99.3 [82.4, 116.0] |
-| DOGEUSDT | 0.78 | 4.76 | 1.36 [1.31, 1.40] | 1.36 | 2.06–3.22 | 1.02 | 4.43 [4.14, 4.76] | 4.13 [3.14, 5.25] |
-| AVAXUSDT | 0.24 | 7.03 | 1.62 [1.60, 1.64] | 1.62 | 4.29–6.20 | 1.06 | 10.8 [10.3, 11.4] | 11.4 [9.9, 12.8] |
+| symbol | tick (bps) | σ (ticks/√s) | 2/κ, K = 1 | (a) γ = 1e-4/USDT | (a) γ/κ = 0.1 | (b) mean | (c) S_be 1 s | (c) S_be 30 s | S_be 1 s (bps) |
+|---|---|---|---|---|---|---|---|---|---|
+| XRPUSDT | 1.69 | 0.74 | 0.49 [0.48, 0.50] | 0.49 | 0.57–1.53 | 1.00 | 1.66 [1.63, 1.69] | 1.98 [1.86, 2.10] | 2.80 [2.75, 2.86] |
+| ADAUSDT | 1.47 | 1.21 | 0.64 [0.62, 0.65] | 0.64 | 0.83–2.02 | 1.00 | 2.14 [2.08, 2.21] | 2.07 [1.79, 2.32] | 3.14 [3.04, 3.24] |
+| LTCUSDT | 1.19 | 1.48 | 0.72 [0.70, 0.73] | 0.72 | 1.02–2.36 | 1.00 | 2.87 [2.72, 3.08] | 3.21 [2.76, 3.63] | 3.42 [3.24, 3.67] |
+| LINKUSDT | 0.50 | 2.35 | 1.01 [0.99, 1.02] | 1.01 | 1.75–3.35 | 1.01 | 4.54 [4.36, 4.73] | 5.33 [4.64, 6.00] | 2.30 [2.20, 2.39] |
+| BTCUSDT | 0.016 | 63.5 | 1.21 [1.19, 1.23] | 1.21 | 7.41–9.41 | 1.04 | 68.8 [65.0, 73.7] | 99.3 [82.4, 116.0] | 1.11 [1.05, 1.19] |
+| DOGEUSDT | 0.78 | 4.76 | 1.36 [1.31, 1.40] | 1.36 | 2.06–3.22 | 1.02 | 4.43 [4.14, 4.76] | 4.13 [3.14, 5.25] | 3.42 [3.21, 3.64] |
+| AVAXUSDT | 0.24 | 7.03 | 1.62 [1.60, 1.64] | 1.62 | 4.29–6.20 | 1.06 | 10.8 [10.3, 11.4] | 11.4 [9.9, 12.8] | 2.56 [2.44, 2.70] |
 
 **2024-03-12 (CPI day)**
 
-| symbol | tick (bps) | σ (ticks/√s) | 2/κ, K = 1 | (a) γ = 1e-4/USDT | (a) γ/κ = 0.1 | (b) mean | (c) S_be 1 s | (c) S_be 30 s |
-|---|---|---|---|---|---|---|---|---|
-| XRPUSDT | 1.44 | 1.70 | 0.67 [0.64, 0.70] | 0.67 | 0.85–1.88 | 1.00 | 2.07 [1.99, 2.16] | 2.31 [2.05, 2.60] |
-| BTCUSDT | 0.014 | 99.4 | 1.34 [1.31, 1.37] | 1.34–1.35 | 8.78–10.78 | 1.38 | 118 [105, 131] | 129 [95, 163] |
+| symbol | tick (bps) | σ (ticks/√s) | 2/κ, K = 1 | (a) γ = 1e-4/USDT | (a) γ/κ = 0.1 | (b) mean | (c) S_be 1 s | (c) S_be 30 s | S_be 1 s (bps) |
+|---|---|---|---|---|---|---|---|---|---|
+| XRPUSDT | 1.44 | 1.70 | 0.67 [0.64, 0.70] | 0.67 | 0.85–1.88 | 1.00 | 2.07 [1.99, 2.16] | 2.31 [2.05, 2.60] | 2.98 [2.86, 3.12] |
+| BTCUSDT | 0.014 | 99.4 | 1.34 [1.31, 1.37] | 1.34–1.35 | 8.78–10.78 | 1.38 | 118 [105, 131] | 129 [95, 163] | 1.66 [1.47, 1.84] |
 
-The observed median spread is 1 tick in every row.
+The observed median spread is 1 tick in every row. The bps column is the notional-weighted
+mean of 2 s (m_{t+h} − m_t) / m_t over touch fills, with its own bootstrap CI.
 
 Reading the table:
 
@@ -207,9 +221,13 @@ Reading the table:
   γ/κ = 0.01, 7.4–9.4 at 0.1). For BTC, γ/κ = 0.01 corresponds to γ_USDT ≈ 100 /USDT,
   six orders of magnitude above the realistic range.
 - **(b) vs (c).** S_be exceeds the observed spread for every symbol, by a factor of 1.7–2.3
-  for XRP and 69–129 for BTC. S_be in ticks roughly increases with σ in ticks; DOGE vs LINK
-  is the one exception in the ranking. Adverse selection is a price move, and the tick is
-  the unit it is counted in.
+  for XRP and 69–129 for BTC.
+  - In bps, the break-even at 1 s is similar across symbols: 1.1–3.4 bps on 2024-03-01
+    (1.7 and 3.0 bps on 03-12).
+  - In ticks it ranges from 1.7 to 69 on 2024-03-01 (118 for BTC on 03-12), about two
+    orders of magnitude.
+  - So the adverse move after a touch fill is roughly one to three bps for every perp, and
+    the tick size decides how many ticks that is.
 - **(a) vs (c).** The model cannot produce (c). In GLFT the mid is a Brownian motion
   independent of fills, so E[s (m_{t+h} − m_t) | fill] = 0 by construction. The agreement of
   (a) with (b) shows that the fill-rate shape and the tick are consistent with a one-tick
@@ -298,10 +316,18 @@ for BTC), so a typical fill is at least one lot. L is a modelling unit, not an e
 | XRPUSDT | 03-12 | 0.67 [0.64, 0.70] | 0.77 [0.72, 0.81] | 0.84 [0.75, 0.92] |
 | BTCUSDT | 03-12 | 1.34 [1.31, 1.37] | 3.19 [3.08, 3.29] | 14.6 [12.4, 16.8] |
 
-For the large-tick perps the geometric model fits, and K hardly matters. For BTC it does
-not fit: the tail of X is far heavier than the first step, and 2/κ ranges from 1.2 to
-9–15 ticks depending on K. Even the K = ∞ value stays far below S_be (69–129 ticks), so
-the conclusion of section 3 does not depend on K.
+![P(X ≥ k) with geometric fits](plots/depth_survival_2024-03-01.png)
+
+The geometric model fits neither symbol beyond the first step.
+
+- **XRP:** P(X ≥ 2) = 0.0027 against 0.0003 from the K = 1 fit. K still hardly matters for
+  κ̂ on the large-tick perps, because 94–98 % of their events (XRP, ADA, LTC) stop at the
+  touch, so the tail carries little weight in the likelihood.
+- **BTC:** P(X ≥ 1) = 0.19 is followed by a slow decay (P(X ≥ 100) = 0.007), and 2/κ
+  ranges from 1.2 to 9–15 ticks depending on K.
+
+Even the K = ∞ value stays far below S_be (69–129 ticks), so the conclusion of section 3
+does not depend on K.
 
 ## 5. Limitations
 
@@ -313,6 +339,12 @@ the conclusion of section 3 does not depend on K.
   rebates, liquidity-provider programs) is unknown. At the BTCUSDT touch the half-spread is
   ≈ 0.008 bps, far below any plausible non-rebated maker fee, so quoting at the touch is
   only profitable with rebates or a high tier.
+- **S_be holds the set of fills fixed.** It averages over the fills that occurred at a
+  one-tick spread. A maker quoting wider would be reached only by takers willing to cross
+  the wider spread, i.e. larger and on average more informed orders. Fills beyond the
+  touch already show larger losses than fills at the touch (section 3). S_be is therefore
+  more likely a lower bound than an upper bound for the break-even of a wider quote. This
+  is not tested here.
 - **No queue position.** The data shows which levels traded, not where a given order sat
   in the queue. "Touched" and "through" bound the fill rate of a new order. The markouts
   average over all realized fills, and therefore include whatever selection makers already
@@ -366,6 +398,7 @@ python examples/plot_markouts.py
 # 4. Fill intensity (kappa for K = 1, 5, inf; sigma; A), then the three-spread table
 python examples/fill_intensity.py --date 2024-03-01
 python examples/fill_intensity.py --date 2024-03-12 --symbols BTCUSDT XRPUSDT
+python examples/plot_depth_survival.py --date 2024-03-01
 python examples/glft_table.py --date 2024-03-01
 python examples/glft_table.py --date 2024-03-12 --symbols BTCUSDT XRPUSDT
 

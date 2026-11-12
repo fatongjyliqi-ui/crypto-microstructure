@@ -91,6 +91,8 @@ def break_even(trades: pl.LazyFrame, quotes: pl.LazyFrame, tick: float) -> dict:
                 f"sbe_{h}": pl.col(f"pi_{h}_bps") * pl.col("mid") / (tick * 1e4)
                 for h in HORIZONS
             },
+            # the same in bps of the mid at the trade
+            **{f"sbe_bps_{h}": pl.col(f"pi_{h}_bps") for h in HORIZONS},
         )
         .collect()
         .sort("first_trade_id")
@@ -108,6 +110,10 @@ def break_even(trades: pl.LazyFrame, quotes: pl.LazyFrame, tick: float) -> dict:
             h = r["value"].removeprefix("sbe_")
             col = f"{prefix}_{h}"
             out[col], out[f"{col}_lo"], out[f"{col}_hi"] = r["point"], r["ci_lo"], r["ci_hi"]
+    ci = block_bootstrap_wmean(pt, [f"sbe_bps_{h}" for h in HORIZONS], "notional", "block")
+    for r in ci.iter_rows(named=True):
+        col = r["value"]
+        out[col], out[f"{col}_lo"], out[f"{col}_hi"] = r["point"], r["ci_lo"], r["ci_hi"]
     return out
 
 
@@ -178,6 +184,7 @@ def main() -> None:
             pl.col("obs_mean_ticks").alias("(b) mean"),
             pl.col("obs_median_ticks").alias("(b) median"),
             *[ci(f"sbe_{h}").alias(f"(c) S_be {h}") for h in HORIZONS],
+            *[ci(f"sbe_bps_{h}").alias(f"(c) S_be {h} (bps)") for h in HORIZONS],
             "n_touch_fills",
         ))
         print("\nRobustness (c): touch fills from single-level events only (no sweeps)")
